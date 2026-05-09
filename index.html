@@ -35,7 +35,7 @@
 
   <!-- ── GOOGLE SEARCH CONSOLE VERIFICATION ── -->
   <!-- Replace the content value below with your actual verification code from Google Search Console -->
-  <meta name="google-site-verification" content="mUddveSshSyriMd7-L86F670mdDyus2UUXN62G8eAFI"/> 
+  <meta name="google-site-verification" content="mUddveSshSyriMd7-L86F670mdDyus2UUXN62G8eAFI" /> 
 
   <!-- ── GOOGLE ANALYTICS (GA4) ── -->
   <!-- Replace G-XXXXXXXXXX with your Measurement ID from analytics.google.com -->
@@ -82,6 +82,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <!-- ── FFMPEG.WASM for MP3 conversion ── -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.12.10/ffmpeg.min.js" crossorigin="anonymous"></script>
   <style>
     :root {
       --lime:   #c8f135;
@@ -625,9 +628,9 @@
   <!-- Download section -->
   <div id="download-section">
     <div class="download-card">
-      <h3>🎉 Your audio is ready!</h3>
-      <p>Your recording has been captured. Download it as a .webm audio file.</p>
-      <button class="btn btn-download" id="download-btn" onclick="downloadAudio()">⬇ Download Audio</button>
+      <h3 id="dl-title">🎉 Your audio is ready!</h3>
+      <p id="dl-subtitle">Converting to MP3… this takes just a moment ✨</p>
+      <button class="btn btn-download" id="download-btn" onclick="downloadAudio()" disabled>⬇ Download MP3</button>
     </div>
   </div>
 
@@ -638,27 +641,45 @@
 
 <script>
   const synth = window.speechSynthesis;
-  let voices = [];
-  let paused = false;
+  let voices      = [];
+  let paused      = false;
   let mediaRecorder = null;
   let audioChunks = [];
-  let audioBlob = null;
+  let audioBlob   = null;   // final MP3 blob
   let waveInterval = null;
   let progressInterval = null;
   let progressVal = 0;
+  let ffmpegReady = false;
+  let ffmpegLoading = false;
+
+  /* ── FFMPEG SETUP ── */
+  const { FFmpeg } = FFmpegWASM;
+  const ffmpeg = new FFmpeg();
+
+  async function loadFFmpeg() {
+    if (ffmpegReady || ffmpegLoading) return;
+    ffmpegLoading = true;
+    try {
+      await ffmpeg.load({
+        coreURL: 'https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.12.10/ffmpeg-core.min.js',
+      });
+      ffmpegReady = true;
+    } catch(e) {
+      console.error('FFmpeg load failed:', e);
+    }
+    ffmpegLoading = false;
+  }
+  // Pre-load FFmpeg in background on page load
+  loadFFmpeg();
 
   /* ── VOICES ── */
   function loadVoices() {
     voices = synth.getVoices();
     const sel = document.getElementById('voice-select');
     sel.innerHTML = '';
-    if (!voices.length) {
-      sel.add(new Option('Default voice', ''));
-      return;
-    }
+    if (!voices.length) { sel.add(new Option('Default voice', '')); return; }
     voices.forEach((v, i) => {
-      const label = v.name + (v.lang ? ' — ' + v.lang : '');
-      const opt = new Option(label, i);
+      const opt = new Option(v.name + (v.lang ? ' — ' + v.lang : ''), i);
       if (v.default) opt.selected = true;
       sel.add(opt);
     });
@@ -688,10 +709,9 @@
     document.getElementById('waveform').className = 'waveform' + (type === 'speaking' ? ' speaking' : '');
   }
 
-  /* ── WAVEFORM ANIMATION ── */
+  /* ── WAVEFORM ── */
   const bars = ['wb1','wb2','wb3','wb4','wb5'];
   const barHeights = [8, 14, 20, 14, 8];
-
   function startWave() {
     waveInterval = setInterval(() => {
       bars.forEach((id, i) => {
@@ -705,12 +725,12 @@
     bars.forEach((id, i) => document.getElementById(id).style.height = barHeights[i] + 'px');
   }
 
-  /* ── PROGRESS ── */
-  function startProgress() {
+  /* ── PROGRESS BAR ── */
+  function startProgress(cap = 90) {
     progressVal = 0;
     document.getElementById('progress-wrap').classList.add('visible');
     progressInterval = setInterval(() => {
-      progressVal = Math.min(progressVal + Math.random() * 2, 90);
+      progressVal = Math.min(progressVal + Math.random() * 2, cap);
       document.getElementById('progress-bar').style.width = progressVal + '%';
     }, 300);
   }
@@ -730,7 +750,46 @@
     document.getElementById('stop-btn').disabled  = !stop;
   }
 
-  /* ── RECORDING via MediaRecorder on destination node ── */
+  /* ── CONVERT WEBM → MP3 via FFmpeg.wasm ── */
+  async function convertToMp3(webmBlob) {
+    setStatus('Converting to MP3… ✨', 'recorded');
+    document.getElementById('dl-subtitle').textContent = 'Converting to MP3 — just a moment…';
+    document.getElementById('download-btn').disabled = true;
+    startProgress(95);
+
+    try {
+      if (!ffmpegReady) {
+        setStatus('Loading converter… ⏳', 'recorded');
+        await loadFFmpeg();
+      }
+      if (!ffmpegReady) throw new Error('FFmpeg failed to load');
+
+      const { fetchFile } = FFmpegWASM;
+      await ffmpeg.writeFile('input.webm', await fetchFile(webmBlob));
+      await ffmpeg.exec(['-i', 'input.webm', '-codec:a', 'libmp3lame', '-qscale:a', '2', 'output.mp3']);
+      const data = await ffmpeg.readFile('output.mp3');
+      audioBlob = new Blob([data.buffer], { type: 'audio/mpeg' });
+
+      endProgress();
+      setStatus('MP3 ready — download below! 🎉', 'recorded');
+      document.getElementById('dl-title').textContent = '🎉 Your MP3 is ready!';
+      document.getElementById('dl-subtitle').textContent = 'High quality MP3 — download and use anywhere.';
+      document.getElementById('download-btn').disabled = false;
+      document.getElementById('download-btn').textContent = '⬇ Download MP3';
+    } catch(err) {
+      console.error('MP3 conversion failed:', err);
+      // Fallback: offer webm download
+      audioBlob = webmBlob;
+      endProgress();
+      setStatus('MP3 conversion failed — offering WebM instead', 'error');
+      document.getElementById('dl-title').textContent = '⚠️ Fallback: WebM Audio';
+      document.getElementById('dl-subtitle').textContent = 'MP3 conversion failed. Downloading as .webm (plays in Chrome, VLC).';
+      document.getElementById('download-btn').disabled = false;
+      document.getElementById('download-btn').textContent = '⬇ Download WebM';
+    }
+  }
+
+  /* ── SPEAK & RECORD ── */
   async function speakAndRecord() {
     const text = ta.value.trim();
     if (!text) { setStatus('Please type something first!', 'error'); return; }
@@ -741,8 +800,8 @@
     paused      = false;
     document.getElementById('download-section').classList.remove('visible');
     document.getElementById('pause-btn').textContent = '⏸';
+    document.getElementById('download-btn').disabled = true;
 
-    /* Try to capture audio via AudioContext + MediaRecorder */
     let recorder = null;
     let ctx = null;
     try {
@@ -750,18 +809,18 @@
       const dest = ctx.createMediaStreamDestination();
       recorder = new MediaRecorder(dest.stream);
       recorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         if (ctx) { ctx.close(); ctx = null; }
-        audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-        endProgress();
-        setStatus('Recording ready — download below! 🎉', 'recorded');
-        setBtns({ speak: true, pause: false, stop: false });
+        const rawWebm = new Blob(audioChunks, { type: 'audio/webm' });
+        stopWave();
+        setBtns({ speak: false, pause: false, stop: false });
         document.getElementById('download-section').classList.add('visible');
         document.getElementById('download-section').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        stopWave();
+        await convertToMp3(rawWebm);
+        setBtns({ speak: true, pause: false, stop: false });
       };
     } catch(e) {
-      console.warn('MediaRecorder unavailable, playing without recording', e);
+      console.warn('MediaRecorder unavailable', e);
     }
 
     const utterance = new SpeechSynthesisUtterance(text);
@@ -775,17 +834,17 @@
       setStatus('Speaking & recording… 🎙', 'speaking');
       setBtns({ speak: false, pause: true, stop: true });
       startWave();
-      startProgress();
+      startProgress(85);
       if (recorder) recorder.start();
     };
     utterance.onend = () => {
       paused = false;
       stopWave();
+      endProgress();
       if (recorder && recorder.state !== 'inactive') {
         recorder.stop();
       } else {
-        endProgress();
-        setStatus('Done! (Recording not available in this browser)', '');
+        setStatus('Done! (Recording not supported in this browser)', '');
         setBtns({ speak: true, pause: false, stop: false });
       }
     };
@@ -820,18 +879,16 @@
     paused = false;
     stopWave(); endProgress();
     if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
-    else {
-      setStatus('Stopped', '');
-      setBtns({ speak: true, pause: false, stop: false });
-    }
+    else { setStatus('Stopped', ''); setBtns({ speak: true, pause: false, stop: false }); }
   }
 
   function downloadAudio() {
     if (!audioBlob) return;
+    const isMp3 = audioBlob.type === 'audio/mpeg';
     const url = URL.createObjectURL(audioBlob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'speakit-audio.webm';
+    a.download = isMp3 ? 'speakit-audio.mp3' : 'speakit-audio.webm';
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
@@ -843,6 +900,9 @@
     audioBlob = null;
     audioChunks = [];
     document.getElementById('download-section').classList.remove('visible');
+    document.getElementById('dl-title').textContent = '🎉 Your audio is ready!';
+    document.getElementById('dl-subtitle').textContent = 'Converting to MP3… this takes just a moment ✨';
+    document.getElementById('download-btn').textContent = '⬇ Download MP3';
     setStatus('Ready — hit Speak to start', '');
   }
 </script>
