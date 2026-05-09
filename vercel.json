@@ -23,29 +23,24 @@
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
         "X-XSS-Protection": "1; mode=block",
-        "Referrer-Policy": "strict-origin-when-cross-origin"
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "require-corp"
       }
     }
   ],
   "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=3600, stale-while-revalidate=86400" }
-      ]
-    },
     {
       "source": "/sitemap.xml",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=86400" }
       ]
     },
-     {
-    "source": "/(.*)",
-    "headers": [
-      { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
-      { "key": "Cross-Origin-Embedder-Policy", "value": "require-corp" }
-    ]
-  }
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, stale-while-revalidate=86400" }
+      ]
+    }
   ]
 }

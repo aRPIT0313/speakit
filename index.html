@@ -35,7 +35,7 @@
 
   <!-- ── GOOGLE SEARCH CONSOLE VERIFICATION ── -->
   <!-- Replace the content value below with your actual verification code from Google Search Console -->
-  <meta name="google-site-verification" content="mUddveSshSyriMd7-L86F670mdDyus2UUXN62G8eAFI" /> 
+  <!-- <meta name="google-site-verification" content="PASTE_YOUR_CODE_HERE" /> -->
 
   <!-- ── GOOGLE ANALYTICS (GA4) ── -->
   <!-- Replace G-XXXXXXXXXX with your Measurement ID from analytics.google.com -->
@@ -669,29 +669,47 @@
     }
     ffmpegLoading = false;
   }
-  // Pre-load FFmpeg in background on page load
-  loadFFmpeg();
-
   /* ── VOICES ── */
   function loadVoices() {
-    voices = synth.getVoices();
+    const list = synth.getVoices();
+    if (!list.length) return;
+    voices = list;
     const sel = document.getElementById('voice-select');
     sel.innerHTML = '';
-    if (!voices.length) { sel.add(new Option('Default voice', '')); return; }
     voices.forEach((v, i) => {
       const opt = new Option(v.name + (v.lang ? ' — ' + v.lang : ''), i);
       if (v.default) opt.selected = true;
       sel.add(opt);
     });
   }
-  loadVoices();
-  if (synth.onvoiceschanged !== undefined) synth.onvoiceschanged = loadVoices;
 
   /* ── CHAR COUNT ── */
   const ta = document.getElementById('tts-input');
-  function updateCount() { document.getElementById('char-count').textContent = ta.value.length; }
+  function updateCount() {
+    document.getElementById('char-count').textContent = ta.value.length;
+  }
   ta.addEventListener('input', updateCount);
-  updateCount();
+
+  /* ── INIT on full page load ── */
+  window.onload = function() {
+    // Char count — runs after DOM + content fully ready
+    updateCount();
+
+    // Voices — try immediately, fallback to event + polling
+    loadVoices();
+    if (synth.onvoiceschanged !== undefined) {
+      synth.onvoiceschanged = function() { loadVoices(); };
+    }
+    let tries = 0;
+    const voicePoll = setInterval(function() {
+      tries++;
+      loadVoices();
+      if (voices.length > 0 || tries > 30) clearInterval(voicePoll);
+    }, 200);
+
+    // Pre-load FFmpeg silently in background
+    loadFFmpeg();
+  };
 
   /* ── SLIDERS ── */
   document.getElementById('rate').addEventListener('input', e =>
